@@ -1,0 +1,229 @@
+<!-- templates/index.html -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SANParks Availability Watcher</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 720px; margin: 30px auto; padding: 0 20px; background: #f5f5f0; color: #333; }
+  h1 { color: #2b5d34; }
+  h2 { color: #2b5d34; margin-top: 40px; }
+  label { display: block; margin-top: 16px; font-weight: bold; }
+  select, input[type="date"], input[type="number"], input[type="text"] {
+    width: 100%; padding: 9px; font-size: 16px; margin-top: 4px; box-sizing: border-box;
+    border: 1px solid #bbb; border-radius: 4px;
+  }
+  #campList { margin-top: 12px; }
+  .campGroup { border: 1px solid #ccc; border-radius: 6px; padding: 12px; margin-top: 10px; background: white; }
+  .campGroup h3 { margin: 0 0 8px 0; color: #2b5d34; font-size: 17px; }
+  .typeRow { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+  .typeRow label { font-weight: normal; margin: 0; display: inline; }
+  button { background: #2b5d34; color: white; border: none; padding: 13px 22px; font-size: 17px;
+    border-radius: 6px; margin-top: 22px; cursor: pointer; }
+  button:hover { background: #1e4526; }
+  .watchCard { border: 1px solid #ccc; border-radius: 6px; padding: 14px; margin-top: 12px; background: white;
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .deleteBtn { background: #a33; padding: 8px 14px; font-size: 14px; margin-top: 0; white-space: nowrap; }
+  .status-ok { color: #2b5d34; }
+  .status-error { color: #a33; }
+  .hint { color: #777; font-size: 14px; }
+  .alert-box { background: #e9efe9; padding: 15px; border-radius: 6px; margin-top: 20px; border: 1px solid #2b5d34; }
+</style>
+</head>
+<body>
+
+<h1>SANParks Availability Watcher</h1>
+<p class="hint">Pick a park and your dates, tick specific camps/accommodation types (or leave everything unticked to watch the whole park), then hit Start Watching.</p>
+
+<label for="park">Which park?</label>
+<select id="park"><option value="">Loading parks...</option></select>
+
+<label for="arrival">Check-in date</label>
+<input type="date" id="arrival">
+
+<label for="departure">Check-out date</label>
+<input type="date" id="departure">
+
+<div id="campList"></div>
+
+<label for="interval">Check every (minutes)</label>
+<input type="number" id="interval" value="10" min="2">
+
+<div class="alert-box">
+  <strong>Phone Alerts:</strong>
+  <p class="hint" style="margin-bottom: 0;">Install the free "ntfy" app on your phone and subscribe to the topic <strong>SANParks_ALERT_776</strong>. All active watches will automatically send push notifications there.</p>
+</div>
+
+<button id="createBtn">Start Watching</button>
+
+<h2>Active Watches</h2>
+<div id="watchList"></div>
+
+<script>
+async function loadParks() {
+  const res = await fetch('/api/parks');
+  const parks = await res.json();
+  const sel = document.getElementById('park');
+  sel.innerHTML = '<option value="">-- choose a park --</option>';
+  parks.sort((a, b) => a.name.localeCompare(b.name));
+  for (const p of parks) {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name;
+    opt.dataset.name = p.name;
+    sel.appendChild(opt);
+  }
+}
+
+async function loadInventory() {
+  const sel = document.getElementById('park');
+  const arrival = document.getElementById('arrival').value;
+  const departure = document.getElementById('departure').value;
+  const campListDiv = document.getElementById('campList');
+
+  if (!sel.value || !arrival || !departure) {
+    campListDiv.innerHTML = '';
+    return;
+  }
+
+  const parkName = sel.options[sel.selectedIndex].dataset.name;
+  campListDiv.innerHTML = '<p>Loading camps and accommodation types...</p>';
+
+  const params = new URLSearchParams({ park_id: sel.value, park_name: parkName, arrival, departure });
+  const res = await fetch('/api/inventory?' + params.toString());
+
+  if (!res.ok) {
+    campListDiv.innerHTML = '<p class="status-error">Could not load camps for this park. Try again in a moment.</p>';
+    return;
+  }
+
+  const grouped = await res.json();
+  campListDiv.innerHTML = '<p class="hint">Leave everything unticked to watch ALL camps and types in this park.</p>';
+
+  for (const resortno in grouped) {
+    const camp = grouped[resortno];
+    const div = document.createElement('div');
+    div.className = 'campGroup';
+
+    const h3 = document.createElement('h3');
+    h3.textContent = camp.camp_name;
+    div.appendChild(h3);
+
+    for (const t of camp.types) {
+      const row = document.createElement('div');
+      row.className = 'typeRow';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.dataset.resortno = resortno;
+      cb.dataset.code = t.code;
+      cb.dataset.name = t.desc || t.name;
+      cb.className = 'unitCheckbox';
+
+      const label = document.createElement('label');
+      label.textContent = `${t.desc} - from R${t.rate}/night`;
+
+      row.appendChild(cb);
+      row.appendChild(label);
+      div.appendChild(row);
+    }
+    campListDiv.appendChild(div);
+  }
+}
+
+async function createWatch() {
+  const sel = document.getElementById('park');
+  if (!sel.value) { alert('Pick a park first'); return; }
+
+  const parkName = sel.options[sel.selectedIndex].dataset.name;
+  const arrival = document.getElementById('arrival').value;
+  const departure = document.getElementById('departure').value;
+  const interval = document.getElementById('interval').value;
+
+  if (!arrival || !departure) {
+    alert('Please fill in both dates');
+    return;
+  }
+
+  const checked = Array.from(document.querySelectorAll('.unitCheckbox:checked'));
+  const units = checked.map(cb => ({ resortno: cb.dataset.resortno, code: cb.dataset.code, name: cb.dataset.name }));
+
+  const body = {
+    park_id: sel.value,
+    park_name: parkName,
+    arrival_date: arrival,
+    departure_date: departure,
+    interval_minutes: parseInt(interval, 10),
+    units: units,
+  };
+
+  const res = await fetch('/api/watches', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (res.ok) {
+    alert('Watch started! You will get a phone alert when something new opens up.');
+    loadWatches();
+  } else {
+    const err = await res.json();
+    alert('Error: ' + (err.error || 'unknown'));
+  }
+}
+
+async function loadWatches() {
+  const res = await fetch('/api/watches');
+  const watches = await res.json();
+  const div = document.getElementById('watchList');
+  div.innerHTML = '';
+
+  if (watches.length === 0) {
+    div.innerHTML = '<p class="hint">No active watches yet.</p>';
+    return;
+  }
+
+  for (const w of watches) {
+    const card = document.createElement('div');
+    card.className = 'watchCard';
+
+    const statusClass = w.last_error ? 'status-error' : 'status-ok';
+    const statusText = w.last_error
+      ? `Problem: ${w.last_error}`
+      : (w.last_checked ? `Last checked: ${w.last_checked}` : 'Not checked yet');
+
+    const info = document.createElement('div');
+    info.innerHTML = `
+      <strong>${w.park_name}</strong> (${w.arrival_date} to ${w.departure_date})<br>
+      <span class="${statusClass}">${statusText}</span><br>
+      <span class="hint">Alerting every ${w.interval_minutes} min</span>
+    `;
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'deleteBtn';
+    delBtn.textContent = 'Stop';
+    delBtn.onclick = async () => {
+      if (confirm('Stop watching this one?')) {
+        await fetch('/api/watches/' + w.id, { method: 'DELETE' });
+        loadWatches();
+      }
+    };
+
+    card.appendChild(info);
+    card.appendChild(delBtn);
+    div.appendChild(card);
+  }
+}
+
+document.getElementById('park').addEventListener('change', loadInventory);
+document.getElementById('arrival').addEventListener('change', loadInventory);
+document.getElementById('departure').addEventListener('change', loadInventory);
+document.getElementById('createBtn').addEventListener('click', createWatch);
+
+loadParks();
+loadWatches();
+setInterval(loadWatches, 30000);
+</script>
+
+</body>
+</html>
