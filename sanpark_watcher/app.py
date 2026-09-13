@@ -75,7 +75,7 @@ def api_create_watch():
         "departure_date": body["departure_date"],
         "units": body.get("units", []),  # [] means "watch everything in this park"
         "interval_minutes": int(body.get("interval_minutes", 10)),
-        "ntfy_topic": "SANParks_ALERT_776", # Hardcoded topic per request
+        "ntfy_topic": body.get("ntfy_topic", "YOUR_NTFY_TOPIC"), # Set to user's desired topic
     }
 
     watch_id = watch_manager.create_watch(config)
