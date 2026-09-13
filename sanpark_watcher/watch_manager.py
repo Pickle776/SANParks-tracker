@@ -171,20 +171,15 @@ def _check_once_with_retry(watch_id, config, max_retries=6):
     
     Total wait time: 1 + 2 + 3 + 4 + 5 = 15 seconds before giving up
     
-    Only sends ntfy notification if all retries fail.
+    Errors are logged but no notification is sent - error handling is done elsewhere.
     """
     for attempt in range(max_retries):
         try:
             return _check_once(watch_id, config)
         except Exception as e:
             if attempt == max_retries - 1:
-                # All retries exhausted - notify user
-                send_ntfy(
-                    config.get("ntfy_topic", "YOUR_NTFY_TOPIC"),
-                    title="SANParks Watcher Error",
-                    message=f"Script failed for {config.get('park_name')} after {max_retries} retries: {e}",
-                    priority="min"
-                )
+                # All retries exhausted - log and give up
+                print(f"[{watch_id}] Failed after {max_retries} retries: {e}")
                 raise
             else:
                 # Not the last attempt - wait and retry
