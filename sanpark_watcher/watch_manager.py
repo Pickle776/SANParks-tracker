@@ -157,18 +157,21 @@ def _run_watch_loop(watch_id, stop_event):
             stop_event.wait(60)
 
 
-def _check_once_with_retry(watch_id, config, max_retries=3):
+def _check_once_with_retry(watch_id, config, max_retries=6):
     """
-    Attempt to check availability up to max_retries times.
+    Attempt to check availability up to max_retries times with exponential backoff.
     
-    Retry logic:
-    - Attempt 1 immediately
-    - If fails, wait 1 second and try again (Attempt 2)
-    - If fails, wait 2 seconds and try again (Attempt 3)
-    - If all retries fail, send ntfy notification and re-raise the exception
+    Retry timing (total ~15 seconds):
+    - Attempt 1: immediate
+    - Attempt 2: wait 1s
+    - Attempt 3: wait 2s
+    - Attempt 4: wait 3s
+    - Attempt 5: wait 4s
+    - Attempt 6: wait 5s
     
-    Total wait time between retries: 1 + 2 = 3 seconds
-    Total time to give up: ~3 seconds before alerting
+    Total wait time: 1 + 2 + 3 + 4 + 5 = 15 seconds before giving up
+    
+    Only sends ntfy notification if all retries fail.
     """
     for attempt in range(max_retries):
         try:
@@ -185,7 +188,7 @@ def _check_once_with_retry(watch_id, config, max_retries=3):
                 raise
             else:
                 # Not the last attempt - wait and retry
-                wait_time = 2 ** attempt  # 1 second on attempt 1, 2 seconds on attempt 2
+                wait_time = attempt + 1  # 1s on attempt 1, 2s on attempt 2, etc.
                 print(f"[{watch_id}] Attempt {attempt + 1}/{max_retries} failed: {e}, retrying in {wait_time}s...")
                 time.sleep(wait_time)
 
