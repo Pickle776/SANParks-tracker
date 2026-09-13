@@ -18,6 +18,7 @@ import json
 import os
 import threading
 import uuid
+import requests
 from datetime import datetime
 
 import sanparks_api
@@ -137,13 +138,30 @@ def _run_watch_loop(watch_id, stop_event):
         except Exception as e:
             config["last_error"] = str(e)
             print(f"[{watch_id}] Error: {e}")
+            
+            # ntfy Error Alert
+            send_ntfy(
+                config.get("ntfy_topic", "YOUR_NTFY_TOPIC"),
+                title="SANParks Watcher Error",
+                message=f"Script failed for {config.get('park_name')}: {e}",
+                priority="high"
+            )
 
         config["last_checked"] = datetime.now().isoformat()
         with _lock:
             _save_watches()
 
         interval_minutes = config.get("interval_minutes", 10)
-        stop_event.wait(interval_minutes * 60)
+        
+        # Wait in 1-minute increments to ping healthchecks
+        for _ in range(interval_minutes):
+            if stop_event.is_set():
+                break
+            try:
+                requests.get("YOUR_HEALTHCHECKS_URL", timeout=5)
+            except:
+                pass
+            stop_event.wait(60)
 
 
 def _check_once(watch_id, config):
