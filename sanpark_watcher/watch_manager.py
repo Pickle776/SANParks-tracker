@@ -17,6 +17,7 @@ Watches are persisted to watches.json so restarting the app can resume them.
 import json
 import os
 import threading
+import time
 import uuid
 import requests
 from datetime import datetime
@@ -133,19 +134,11 @@ def _run_watch_loop(watch_id, stop_event):
             return
 
         try:
-            _check_once(watch_id, config)
+            _check_once_with_retry(watch_id, config)
             config["last_error"] = None
         except Exception as e:
             config["last_error"] = str(e)
             print(f"[{watch_id}] Error: {e}")
-            
-            # ntfy Error Alert
-            send_ntfy(
-                config.get("ntfy_topic", "YOUR_NTFY_TOPIC"),
-                title="SANParks Watcher Error",
-                message=f"Script failed for {config.get('park_name')}: {e}",
-                priority="high"
-            )
 
         config["last_checked"] = datetime.now().isoformat()
         with _lock:
@@ -162,6 +155,39 @@ def _run_watch_loop(watch_id, stop_event):
             except:
                 pass
             stop_event.wait(60)
+
+
+def _check_once_with_retry(watch_id, config, max_retries=3):
+    """
+    Attempt to check availability up to max_retries times.
+    
+    Retry logic:
+    - Attempt 1 immediately
+    - If fails, wait 1 second and try again (Attempt 2)
+    - If fails, wait 2 seconds and try again (Attempt 3)
+    - If all retries fail, send ntfy notification and re-raise the exception
+    
+    Total wait time between retries: 1 + 2 = 3 seconds
+    Total time to give up: ~3 seconds before alerting
+    """
+    for attempt in range(max_retries):
+        try:
+            return _check_once(watch_id, config)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                # All retries exhausted - notify user
+                send_ntfy(
+                    config.get("ntfy_topic", "YOUR_NTFY_TOPIC"),
+                    title="SANParks Watcher Error",
+                    message=f"Script failed for {config.get('park_name')} after {max_retries} retries: {e}",
+                    priority="min"
+                )
+                raise
+            else:
+                # Not the last attempt - wait and retry
+                wait_time = 2 ** attempt  # 1 second on attempt 1, 2 seconds on attempt 2
+                print(f"[{watch_id}] Attempt {attempt + 1}/{max_retries} failed: {e}, retrying in {wait_time}s...")
+                time.sleep(wait_time)
 
 
 def _check_once(watch_id, config):
