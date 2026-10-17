@@ -1,4 +1,3 @@
-# README.md
 # SANParks Availability Watcher
 
 A background scraper and local web GUI that automatically monitors SANParks accommodation. It checks for new openings within your desired dates and sends a push notification only when a previously booked spot becomes available.
@@ -10,8 +9,13 @@ A background scraper and local web GUI that automatically monitors SANParks acco
 * `notifier.py`: Delivers push notifications directly to a smartphone using ntfy.sh.
 
 ## Reliability & Environment Setup
-This tool is built to run headless 24/7. When running on older hardware (such as a repurposed Linux Mint laptop), network and power instability can silently kill the scraper. The code supports the following external reliability measures, which you can interpret and configure for your own hardware:
+This tool is built to run headless 24/7. When running on older hardware (such as a repurposed Linux laptop), network and power instability can silently kill the scraper. The setup incorporates several layers of self-healing and monitoring:
 
-* **Uptime Monitoring (Healthchecks.io):** The `watch_manager.py` script is designed to silently hit a Healthchecks ping URL once every minute. If the machine loses power or internet and misses its grace period, Healthchecks notifies you that the system is down.
-* **Automated Error Alerts (ntfy.sh):** Push notifications handle successful spot-opening alerts, but will also fire a high-priority push if the scraper crashes or gets blocked by the host server. 
-* **Self-Healing Wi-Fi (Cron):** To counter older Linux hardware dropping Wi-Fi connections indefinitely, it's recommended to run a root cron job watchdog that checks outbound connectivity (e.g., `ping -c 1 8.8.8.8`). If the ping fails, the watchdog forces the network adapter to cycle off and on via `nmcli`, keeping the machine online without physical intervention.
+* **Uptime Monitoring (Healthchecks.io):** The `watch_manager.py` script silently pings a Healthchecks URL every minute. If the machine loses power, Wi-Fi, or crashes and misses its grace window, Healthchecks sends an alert that the host is down.
+* **Automated Error Alerts (ntfy.sh):** Push notifications alert on open booking slots, but also fire a high-priority push notification if the scraper crashes or encounters upstream anti-scraping blocks.
+* **Driver & Power-Management Stabilization:** Older wireless chips (such as Realtek PCIe adapters) often suffer from aggressive Linux kernel power-saving states (`fwlps`, `ips`, `aspm`) that put the radio transceiver into a deep sleep and freeze outbound traffic. Disabling driver-level power saving in `/etc/modprobe.d/` and disabling NetworkManager Wi-Fi power-saving keeps the radio active 24/7.
+* **Static IP Architecture:** When running behind Wi-Fi range extenders or secondary access points where DHCP negotiation can time out, configuring a static IPv4 assignment ensures immediate, zero-timeout network association.
+* **Smart Self-Healing Watchdog & AP Failover (Cron):** A scheduled background watchdog script runs every few minutes to safeguard connectivity:
+  * Non-intrusive: Verifies NetworkManager is not actively in the middle of authenticating before acting, avoiding connection thrashing.
+  * Multi-check: Confirms genuine loss of connectivity by probing both the local gateway and external DNS.
+  * Automatic Failover: First attempts recovery on the primary Wi-Fi network (e.g., range extender); if the primary AP remains unreachable (such as a power cut to the extender), it automatically fails over to the secondary/main router SSID.
